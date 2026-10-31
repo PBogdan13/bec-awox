@@ -37,7 +37,8 @@ object Bulb {
     data class Status(
         val on: Boolean, val colorMode: Boolean,
         val whiteBri: Int, val whiteTemp: Int, val colorBri: Int,
-        val r: Int, val g: Int, val b: Int
+        val r: Int, val g: Int, val b: Int,
+        val mode: Int
     )
 
     var state = State.OFF
@@ -233,8 +234,16 @@ object Bulb {
         if (meshId != 0 || mode >= 40) return
         fun u(i: Int) = m[i].toInt() and 0xff
         lastOn = mode % 2 == 1
-        val st = Status(lastOn, mode == 3, u(13), u(14), u(15), u(16), u(17), u(18))
+        val st = Status(lastOn, mode == 3, u(13), u(14), u(15), u(16), u(17), u(18), mode)
         lastStatus = st
+        // becul s-a reaprins singur la scurt timp după ce l-ai stins: îl stingem din nou
+        if (lastOn && !desiredOn && offAt > 0 && reOffCount < 5 &&
+            android.os.SystemClock.elapsedRealtime() - offAt < 120_000
+        ) {
+            reOffCount++
+            stopSequence()
+            send(C_POWER, byteArrayOf(0))
+        }
         statusListener?.invoke(st)
     }
 
@@ -321,10 +330,20 @@ object Bulb {
         }
     }
 
+    private var desiredOn = false
+    private var offAt = 0L
+    private var reOffCount = 0
+
     fun setPower(on: Boolean) {
         lastOn = on
+        desiredOn = on
+        if (!on) {
+            offAt = android.os.SystemClock.elapsedRealtime(); reOffCount = 0
+        }
         if (!on) stopSequence()
         send(C_POWER, byteArrayOf(if (on) 1 else 0))
+        // rezervă: dacă becul a rămas sau a revenit aprins, mai trimitem o dată oprirea
+        if (!on) main.postDelayed({ if (!desiredOn && lastOn) { stopSequence(); send(C_POWER, byteArrayOf(0)); lastOn = false } }, 1500)
     }
 
     /**

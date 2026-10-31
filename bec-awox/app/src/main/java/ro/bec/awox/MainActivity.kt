@@ -26,7 +26,6 @@ import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
-import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -67,6 +66,9 @@ class MainActivity : Activity() {
     private lateinit var passEdit: EditText
     private lateinit var schedulesBox: LinearLayout
     private lateinit var nextScheduleText: TextView
+    private lateinit var diagText: TextView
+    private val diagLog = ArrayDeque<String>()
+    private var lastDiagMode = -1
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -266,23 +268,6 @@ class MainActivity : Activity() {
         }
         controls.addView(card("Culoare", wheel, swatches, field("Luminozitate", cBriValue, cBriBar)), lp(top = 12))
 
-        // scene
-        val grid = GridLayout(this).apply { columnCount = 4 }
-        for (n in 0..6) {
-            grid.addView(Button(this).apply {
-                text = "${n + 1}"
-                textSize = 17f
-                stateListAnimator = null
-                setTextColor(cFg)
-                background = rounded(cBg, 12)
-                setOnClickListener { ensureOn(); Bulb.setPreset(n) }
-            }, GridLayout.LayoutParams(GridLayout.spec(n / 4), GridLayout.spec(n % 4, 1f)).apply {
-                width = 0
-                height = dp(52)
-                setMargins(dp(4), dp(4), dp(4), dp(4))
-            })
-        }
-        controls.addView(card("Scene din bec", grid), lp(top = 12))
         root.addView(controls, lp(top = 4))
 
         // programări
@@ -305,7 +290,11 @@ class MainActivity : Activity() {
             Bulb.disconnect()
             updateBulbText()
         }
-        root.addView(card("Setări", labeled("Nume mesh", nameEdit), labeled("Parolă mesh", passEdit), note, save, forget), lp(top = 12))
+        diagText = text("Starea raportată de bec apare aici după conectare.", 12f, cMuted).apply {
+            typeface = Typeface.MONOSPACE
+        }
+        root.addView(card("Setări", labeled("Nume mesh", nameEdit), labeled("Parolă mesh", passEdit), note, save, forget,
+            labeled("Ce raportează becul", diagText)), lp(top = 12))
 
         updateBulbText()
         showWhite()
@@ -358,7 +347,25 @@ class MainActivity : Activity() {
         if (v is ViewGroup) for (i in 0 until v.childCount) setEnabledDeep(v.getChildAt(i), on)
     }
 
+    private fun modeName(m: Int) = when (m) {
+        0, 2, 4, 6 -> "stins"
+        1, 5 -> "alb"
+        3 -> "culoare"
+        7 -> "SECVENȚĂ de culori"
+        else -> "necunoscut"
+    }
+
+    private fun logMode(m: Int) {
+        if (m == lastDiagMode) return
+        lastDiagMode = m
+        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        diagLog.addFirst("$time  mod $m · ${modeName(m)}")
+        while (diagLog.size > 8) diagLog.removeLast()
+        diagText.text = diagLog.joinToString("\n")
+    }
+
     private fun applyStatus(st: Bulb.Status) {
+        logMode(st.mode)
         showPower(st.on)
         if (st.colorMode) {
             cBriBar.progress = st.colorBri.coerceIn(10, 100)
