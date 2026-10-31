@@ -1,0 +1,48 @@
+name: Construieste APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bec-awox
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Compileaza
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Pregateste fisierul
+        run: cp app/build/outputs/apk/release/app-release.apk BeculMeu.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BeculMeu
+          path: bec-awox/BeculMeu.apk
+
+      - name: Publica la Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest BeculMeu.apk \
+            --title "Becul Meu (build ${{ github.run_number }})" \
+            --notes "Descarca BeculMeu.apk pe telefon si instaleaza-l." \
+            --target ${{ github.sha }}
