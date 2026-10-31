@@ -323,7 +323,19 @@ object Bulb {
 
     fun setPower(on: Boolean) {
         lastOn = on
+        if (!on) stopSequence()
         send(C_POWER, byteArrayOf(if (on) 1 else 0))
+    }
+
+    /**
+     * Oprește o scenă (secvență de culori) care rulează în bec. Comanda „stinge” singură
+     * nu o oprește, iar la pasul următor al secvenței becul se reaprinde. Retrimitem
+     * culoarea sau nuanța de alb curentă, ca becul să treacă pe lumină fixă.
+     */
+    fun stopSequence() {
+        val st = lastStatus
+        if (st != null && st.colorMode) setColor(st.r, st.g, st.b)
+        else setWhiteTemp(st?.whiteTemp ?: 64)
     }
 
     fun setWhiteTemp(v: Int) = send(C_WHITE_TEMP, byteArrayOf(v.toByte()), "wt")
