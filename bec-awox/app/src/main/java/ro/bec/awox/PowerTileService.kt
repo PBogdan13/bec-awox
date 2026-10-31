@@ -40,7 +40,7 @@ class PowerTileService : TileService() {
             main.postDelayed({
                 Bulb.setPower(!Bulb.lastOn)
                 refresh()
-                main.postDelayed({ if (!Bulb.uiAttached) Bulb.disconnect() }, 4000)
+                main.postDelayed({ if (!Bulb.uiAttached && !Bulb.keepAlive) Bulb.disconnect() }, 4000)
             }, 700)
         }
     }

@@ -45,6 +45,10 @@ object Bulb {
     var lastOn = false
         private set
     var uiAttached = false
+    /** pus de programări cât timp rulează, ca ecranul sau dala să nu închidă conexiunea */
+    var keepAlive = false
+    var lastStatus: Status? = null
+        private set
 
     var listener: ((State, String) -> Unit)? = null
     var statusListener: ((Status) -> Unit)? = null
@@ -229,7 +233,9 @@ object Bulb {
         if (meshId != 0 || mode >= 40) return
         fun u(i: Int) = m[i].toInt() and 0xff
         lastOn = mode % 2 == 1
-        statusListener?.invoke(Status(lastOn, mode == 3, u(13), u(14), u(15), u(16), u(17), u(18)))
+        val st = Status(lastOn, mode == 3, u(13), u(14), u(15), u(16), u(17), u(18))
+        lastStatus = st
+        statusListener?.invoke(st)
     }
 
     private val callback = object : BluetoothGattCallback() {

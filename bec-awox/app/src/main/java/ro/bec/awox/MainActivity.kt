@@ -31,6 +31,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import android.app.TimePickerDialog
+import android.widget.Switch
 
 @SuppressLint("MissingPermission", "SetTextI18n")
 class MainActivity : Activity() {
@@ -63,6 +65,8 @@ class MainActivity : Activity() {
     private lateinit var cBriValue: TextView
     private lateinit var nameEdit: EditText
     private lateinit var passEdit: EditText
+    private lateinit var schedulesBox: LinearLayout
+    private lateinit var nextScheduleText: TextView
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -80,16 +84,18 @@ class MainActivity : Activity() {
         super.onStart()
         Bulb.uiAttached = true
         autoConnect()
+        renderSchedules()
     }
 
     override fun onStop() {
         super.onStop()
         Bulb.uiAttached = false
-        main.postDelayed({ if (!Bulb.uiAttached) Bulb.disconnect() }, 3000)
+        main.postDelayed({ if (!Bulb.uiAttached && !Bulb.keepAlive) Bulb.disconnect() }, 3000)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != 1) return
         if (hasPerms()) autoConnect()
         else render(Bulb.State.ERROR, "Fără permisiunea „Dispozitive din apropiere” aplicația nu poate vorbi cu becul.")
     }
@@ -279,6 +285,12 @@ class MainActivity : Activity() {
         controls.addView(card("Scene din bec", grid), lp(top = 12))
         root.addView(controls, lp(top = 4))
 
+        // programări
+        nextScheduleText = text("", 14f, cMuted)
+        schedulesBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val addSchedule = button("Adaugă programare", false) { editSchedule(null) }
+        root.addView(card("Programări", nextScheduleText, schedulesBox, addSchedule), lp(top = 12))
+
         // setări
         nameEdit = edit(prefs.getString("name", "unpaired") ?: "unpaired")
         passEdit = edit(prefs.getString("pass", "1234") ?: "1234")
@@ -406,6 +418,139 @@ class MainActivity : Activity() {
         ensureOn()
         Bulb.setColor(r, g, b)
         setGlow(Color.rgb(r, g, b))
+    }
+
+    // ---------- programări ----------
+    private fun renderSchedules() {
+        if (!::schedulesBox.isInitialized) return
+        schedulesBox.removeAllViews()
+        val list = Schedules.load(this)
+        nextScheduleText.text = Schedules.nextText(this)
+            ?: if (list.isEmpty()) "Becul se poate aprinde sau stinge singur la ore fixe, cât timp telefonul e în apropiere."
+            else "Toate programările sunt oprite."
+        for (s in list) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(cBg, 12, null)
+                setPadding(dp(14), dp(10), dp(8), dp(10))
+                val texts = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(text(s.timeText(), 22f, if (s.enabled) cFg else cMuted, true))
+                    addView(text("${s.daysText()} · ${s.actionText()}", 13f, cMuted))
+                }
+                addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(Switch(this@MainActivity).apply {
+                    isChecked = s.enabled
+                    setOnCheckedChangeListener { _, checked ->
+                        val all = Schedules.load(this@MainActivity)
+                        Schedules.save(this@MainActivity, all.map { if (it.id == s.id) it.copy(enabled = checked) else it })
+                        main.post { renderSchedules() }
+                    }
+                })
+                setOnClickListener { editSchedule(s) }
+            }
+            schedulesBox.addView(row, lp(top = 8))
+        }
+    }
+
+    private fun chip(label: String) = text(label, 14f, cFg, true).apply {
+        gravity = Gravity.CENTER
+        setPadding(dp(4), dp(8), dp(4), dp(8))
+    }
+
+    private fun paintChip(v: TextView, on: Boolean) {
+        v.background = rounded(if (on) cAccent else cBg, 99, if (on) null else cLine)
+        v.setTextColor(if (on) 0xFF1D1206.toInt() else cFg)
+    }
+
+    private fun chipRow(views: List<TextView>) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        views.forEach { addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) }) }
+    }
+
+    private fun editSchedule(existing: Schedule?) {
+        var hour = existing?.hour ?: 7
+        var minute = existing?.minute ?: 0
+        var days = existing?.days ?: 0x1f
+        var turnOn = existing?.turnOn ?: true
+        var fade = existing?.fadeMin ?: 0
+        var bri = existing?.brightness ?: 100
+        val fades = listOf(0, 5, 10, 15, 30)
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+
+        val timeBtn = button("%02d:%02d".format(hour, minute), false) {}
+        timeBtn.textSize = 30f
+        timeBtn.setOnClickListener {
+            TimePickerDialog(this, { _, h, m ->
+                hour = h; minute = m
+                timeBtn.text = "%02d:%02d".format(h, m)
+            }, hour, minute, true).show()
+        }
+        box.addView(timeBtn)
+
+        // zile
+        val dayViews = Schedule.DAY_NAMES.map { chip(it) }
+        val dayHint = text("", 13f, cMuted)
+        fun paintDays() {
+            dayViews.forEachIndexed { i, v -> paintChip(v, (days and (1 shl i)) != 0) }
+            dayHint.text = if (days == 0) "Nicio zi aleasă: rulează o singură dată." else "Se repetă: " + Schedule(0, 0, 0, days, true, 0, 0, true).daysText()
+        }
+        dayViews.forEachIndexed { i, v -> v.setOnClickListener { days = days xor (1 shl i); paintDays() } }
+        paintDays()
+        box.addView(labeled("Zile", chipRow(dayViews)), lp(top = 16))
+        box.addView(dayHint, lp(top = 6))
+
+        // acțiune
+        val onChip = chip("Aprinde")
+        val offChip = chip("Stinge")
+        val briValue = text("$bri%", 15f, cMuted)
+        val briBar = seek(10, 100, bri, intArrayOf(0xFF2A2620.toInt(), 0xFFFFF1D6.toInt())) {
+            bri = it; briValue.text = "$it%"
+        }
+        val briField = field("Luminozitate la aprindere", briValue, briBar)
+        fun paintAction() {
+            paintChip(onChip, turnOn)
+            paintChip(offChip, !turnOn)
+            briField.visibility = if (turnOn) View.VISIBLE else View.GONE
+        }
+        onChip.setOnClickListener { turnOn = true; paintAction() }
+        offChip.setOnClickListener { turnOn = false; paintAction() }
+        box.addView(labeled("Ce face", chipRow(listOf(onChip, offChip))), lp(top = 16))
+
+        // treptat
+        val fadeViews = fades.map { chip(if (it == 0) "Instant" else "$it min") }
+        fun paintFade() = fadeViews.forEachIndexed { i, v -> paintChip(v, fades[i] == fade) }
+        fadeViews.forEachIndexed { i, v -> v.setOnClickListener { fade = fades[i]; paintFade() } }
+        paintFade()
+        box.addView(labeled("Treptat", chipRow(fadeViews)), lp(top = 16))
+        box.addView(text("Aprinderea treptată pornește de la lumină slabă la ora aleasă. Stingerea treptată coboară lumina până se stinge.", 13f, cMuted), lp(top = 6))
+
+        box.addView(briField, lp(top = 16))
+        paintAction()
+
+        val b = AlertDialog.Builder(this)
+            .setTitle(if (existing == null) "Programare nouă" else "Modifică programarea")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Salvează") { _, _ ->
+                val list = Schedules.load(this)
+                val s = Schedule(existing?.id ?: Schedules.newId(list), hour, minute, days, turnOn, fade, bri, true)
+                Schedules.save(this, list.filter { it.id != s.id } + s)
+                renderSchedules()
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
+            }
+            .setNegativeButton("Renunță", null)
+        if (existing != null) b.setNeutralButton("Șterge") { _, _ ->
+            Schedules.save(this, Schedules.load(this).filter { it.id != existing.id })
+            renderSchedules()
+        }
+        b.show()
     }
 
     // ---------- căutarea becului ----------
