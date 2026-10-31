@@ -39,9 +39,7 @@ class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
 
     // paletă: lumină caldă de bec, pe fundal deschis sau închis după tema telefonului
-    private val dark by lazy {
-        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    }
+    private val dark = true
     private val cBg get() = if (dark) 0xFF16130F.toInt() else 0xFFF4F2EE.toInt()
     private val cSurface get() = if (dark) 0xFF221E19.toInt() else 0xFFFFFFFF.toInt()
     private val cLine get() = if (dark) 0xFF37312A.toInt() else 0xFFE2DDD4.toInt()
@@ -53,15 +51,16 @@ class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var bulbText: TextView
-    private lateinit var powerBtn: android.widget.ImageButton
-    private lateinit var glow: View
+    private lateinit var sphere: DustSphereView
+    private lateinit var comet: CometSliderView
+    private lateinit var tempLabel: TextView
+    private lateinit var whitePanel: LinearLayout
+    private lateinit var colorPanel: LinearLayout
+    private lateinit var segWhite: TextView
+    private lateinit var segColor: TextView
+    private lateinit var meshInfo: TextView
+    private var whiteMode = true
     private lateinit var controls: LinearLayout
-    private lateinit var tempBar: SeekBar
-    private lateinit var wBriBar: SeekBar
-    private lateinit var cBriBar: SeekBar
-    private lateinit var tempValue: TextView
-    private lateinit var wBriValue: TextView
-    private lateinit var cBriValue: TextView
     private lateinit var nameEdit: EditText
     private lateinit var passEdit: EditText
     private lateinit var schedulesBox: LinearLayout
@@ -213,60 +212,90 @@ class MainActivity : Activity() {
 
         controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // butonul mare de pornire, cu o aură în culoarea becului
-        val stage = android.widget.FrameLayout(this)
-        glow = View(this).apply {
-            background = GradientDrawable().apply {
-                gradientType = GradientDrawable.RADIAL_GRADIENT
-                gradientRadius = dp(120).toFloat()
-                colors = intArrayOf(0xCCFFC478.toInt(), 0x00FFC478)
+        // becul: sfera de praf
+        sphere = DustSphereView(this).apply {
+            onToggle = {
+                Bulb.setPower(!Bulb.lastOn)
+                on = Bulb.lastOn
             }
-            alpha = 0f
+            onBrightness = { f ->
+                ensureOn()
+                if (whiteMode) Bulb.setWhiteBri((f * 127).toInt().coerceIn(1, 127))
+                else Bulb.setColorBri((f * 100).toInt().coerceIn(10, 100))
+            }
         }
-        stage.addView(glow, android.widget.FrameLayout.LayoutParams(dp(250), dp(250), Gravity.CENTER))
-        powerBtn = android.widget.ImageButton(this).apply {
-            setImageResource(R.drawable.ic_bulb)
-            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-            setPadding(dp(38), dp(38), dp(38), dp(38))
-            imageTintList = ColorStateList.valueOf(cFg)
-            contentDescription = "Pornește sau oprește becul"
-            stateListAnimator = null
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(cSurface); setStroke(dp(1), cLine) }
-            elevation = dp(6).toFloat()
-            setOnClickListener { Bulb.setPower(!Bulb.lastOn); showPower(Bulb.lastOn) }
-        }
-        stage.addView(powerBtn, android.widget.FrameLayout.LayoutParams(dp(132), dp(132), Gravity.CENTER))
-        controls.addView(stage, lp(h = dp(250), top = 4))
+        controls.addView(sphere, lp(top = 4))
 
-        // alb
-        tempValue = text("neutru", 15f, cMuted)
-        wBriValue = text("100%", 15f, cMuted)
-        tempBar = seek(0, 127, 64, intArrayOf(0xFFFFB35C.toInt(), 0xFFFFF3DF.toInt(), 0xFFCFE2FF.toInt())) {
-            ensureOn(); Bulb.setWhiteTemp(it); showWhite(); glowWhite()
+        // comutator Alb / Culoare
+        segWhite = segButton("Alb") { showMode(true) }
+        segColor = segButton("Culoare") { showMode(false) }
+        val seg = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(cSurface, 14, null)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            addView(segWhite, LinearLayout.LayoutParams(0, dp(38), 1f))
+            addView(segColor, LinearLayout.LayoutParams(0, dp(38), 1f).apply { leftMargin = dp(4) })
         }
-        wBriBar = seek(1, 127, 127, intArrayOf(0xFF2A2620.toInt(), 0xFFFFF1D6.toInt())) {
-            ensureOn(); Bulb.setWhiteBri(it); showWhite()
-        }
-        controls.addView(card("Lumină albă", field("Nuanță", tempValue, tempBar), field("Luminozitate", wBriValue, wBriBar)), lp(top = 8))
+        controls.addView(seg, lp(top = 4))
 
-        // culoare
+        // alb: nuanța ca o cometă + butoane rapide
+        tempLabel = text("neutru", 13f, cMuted)
+        comet = CometSliderView(this) { v -> setTemp(v) }
+        val tempHead = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(text("Nuanță", 13f, cMuted), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(tempLabel)
+        }
+        val ends = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(text("cald", 11f, cMuted), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(text("rece", 11f, cMuted))
+        }
+        val quick = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            listOf("Lumânare" to 5f, "Citit" to 45f, "Birou" to 75f, "Zi" to 100f).forEachIndexed { i, (n, v) ->
+                addView(text(n, 13f, cFg).apply {
+                    gravity = Gravity.CENTER
+                    background = rounded(cBg, 10, null)
+                    setPadding(0, dp(9), 0, dp(9))
+                    setOnClickListener { comet.setValue(v); setTemp(v) }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) leftMargin = dp(8) })
+            }
+        }
+        whitePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(cSurface, 16, null)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            addView(tempHead)
+            addView(comet, lp(top = 2))
+            addView(ends)
+            addView(quick, lp(top = 10))
+        }
+        controls.addView(whitePanel, lp(top = 12))
+
+        // culoare: roată + culori rapide
         val wheel = ColorWheelView(this) { c -> pickColor(Color.red(c), Color.green(c), Color.blue(c)) }
         val swatches = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            listOf(0xFFFF0000, 0xFFFF7800, 0xFFFFDC00, 0xFF00DC3C, 0xFF00C8FF, 0xFF003CFF, 0xFF9600FF, 0xFFFF0096).forEach { v ->
+            listOf(0xFFFF3C28, 0xFFFF8C00, 0xFFFFDC00, 0xFF00D25A, 0xFF00BEFF, 0xFF3C50FF, 0xFFAA3CFF, 0xFFFF2896).forEach { v ->
                 val c = v.toInt()
                 addView(View(this@MainActivity).apply {
-                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c); setStroke(dp(2), cLine) }
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c) }
                     setOnClickListener { pickColor(Color.red(c), Color.green(c), Color.blue(c)) }
-                }, LinearLayout.LayoutParams(dp(32), dp(32)).apply { setMargins(dp(4), 0, dp(4), 0) })
+                }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(4), 0) })
             }
         }
-        cBriValue = text("100%", 15f, cMuted)
-        cBriBar = seek(10, 100, 100, intArrayOf(0xFF2A2620.toInt(), 0xFFFFF1D6.toInt())) {
-            ensureOn(); Bulb.setColorBri(it); cBriValue.text = "$it%"
+        colorPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(cSurface, 16, null)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            addView(wheel)
+            addView(swatches, lp(top = 12))
+            visibility = View.GONE
         }
-        controls.addView(card("Culoare", wheel, swatches, field("Luminozitate", cBriValue, cBriBar)), lp(top = 12))
+        controls.addView(colorPanel, lp(top = 12))
+        showMode(true)
 
         root.addView(controls, lp(top = 4))
 
@@ -290,15 +319,19 @@ class MainActivity : Activity() {
             Bulb.disconnect()
             updateBulbText()
         }
+        meshInfo = text("", 13f, cMuted)
+        val secure = button("Fă becul doar al meu", true) { confirmSecure() }
         diagText = text("Starea raportată de bec apare aici după conectare.", 12f, cMuted).apply {
             typeface = Typeface.MONOSPACE
         }
+        root.addView(card("Siguranță", meshInfo, secure), lp(top = 12))
         root.addView(card("Setări", labeled("Nume mesh", nameEdit), labeled("Parolă mesh", passEdit), note, save, forget,
             labeled("Ce raportează becul", diagText)), lp(top = 12))
+        updateMeshInfo()
 
         updateBulbText()
-        showWhite()
-        glowWhite()
+        setTempLabel(comet.value)
+        sphere.setLightColor(CometSliderView.tempColor(comet.value))
 
         return ScrollView(this).apply {
             setBackgroundColor(cBg)
@@ -366,65 +399,112 @@ class MainActivity : Activity() {
 
     private fun applyStatus(st: Bulb.Status) {
         logMode(st.mode)
-        showPower(st.on)
+        sphere.on = st.on
         if (st.colorMode) {
-            cBriBar.progress = st.colorBri.coerceIn(10, 100)
-            cBriValue.text = "${cBriBar.progress}%"
-            setGlow(Color.rgb(st.r, st.g, st.b))
-        } else {
-            tempBar.progress = st.whiteTemp.coerceIn(0, 127)
-            wBriBar.progress = st.whiteBri.coerceIn(1, 127)
-            showWhite()
-            glowWhite()
+            whiteMode = false
+            sphere.setLightColor(Color.rgb(st.r, st.g, st.b))
+            sphere.bri = (st.colorBri / 100f).coerceIn(0.05f, 1f)
+        } else if (st.on) {
+            whiteMode = true
+            val v = (st.whiteTemp / 1.27f).coerceIn(0f, 100f)
+            comet.setValue(v)
+            setTempLabel(v)
+            sphere.setLightColor(CometSliderView.tempColor(v))
+            sphere.bri = (st.whiteBri / 127f).coerceIn(0.05f, 1f)
         }
     }
 
     private fun ensureOn() {
         if (!Bulb.lastOn) {
-            Bulb.setPower(true); showPower(true)
+            Bulb.setPower(true)
+            sphere.on = true
         }
     }
 
-    private fun showPower(on: Boolean) {
-        glow.animate().alpha(if (on) 1f else 0f).setDuration(250).start()
-        powerBtn.imageTintList = ColorStateList.valueOf(if (on) cAccent else cMuted)
+    private fun segButton(label: String, onClick: () -> Unit) = text(label, 14f, cMuted).apply {
+        gravity = Gravity.CENTER
+        setOnClickListener { onClick() }
     }
 
-    private fun showWhite() {
-        val t = tempBar.progress
-        tempValue.text = when {
-            t < 40 -> "cald"
-            t > 88 -> "rece"
+    private fun showMode(white: Boolean) {
+        whitePanel.visibility = if (white) View.VISIBLE else View.GONE
+        colorPanel.visibility = if (white) View.GONE else View.VISIBLE
+        segWhite.background = if (white) rounded(cBg, 10, null) else null
+        segColor.background = if (!white) rounded(cBg, 10, null) else null
+        segWhite.setTextColor(if (white) cFg else cMuted)
+        segColor.setTextColor(if (!white) cFg else cMuted)
+    }
+
+    private fun setTempLabel(v: Float) {
+        tempLabel.text = when {
+            v < 35 -> "cald"
+            v > 70 -> "rece"
             else -> "neutru"
         }
-        wBriValue.text = "${Math.round(wBriBar.progress / 127f * 100)}%"
     }
 
-    private fun mix(a: Int, b: Int, t: Float): Int = Color.rgb(
-        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(),
-        (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(),
-        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt()
-    )
-
-    private fun glowWhite() {
-        val t = tempBar.progress / 127f
-        val warm = 0xFFFFB35C.toInt()
-        val mid = 0xFFFFF3DF.toInt()
-        val cold = 0xFFCFE2FF.toInt()
-        setGlow(if (t < 0.5f) mix(warm, mid, t * 2) else mix(mid, cold, (t - 0.5f) * 2))
-    }
-
-    private fun setGlow(c: Int) {
-        (glow.background as? GradientDrawable)?.colors = intArrayOf(
-            Color.argb(210, Color.red(c), Color.green(c), Color.blue(c)),
-            Color.argb(0, Color.red(c), Color.green(c), Color.blue(c))
-        )
+    private fun setTemp(v: Float) {
+        ensureOn()
+        whiteMode = true
+        Bulb.setWhiteTemp((v * 1.27f).toInt().coerceIn(0, 127))
+        setTempLabel(v)
+        sphere.setLightColor(CometSliderView.tempColor(v))
     }
 
     private fun pickColor(r: Int, g: Int, b: Int) {
         ensureOn()
+        whiteMode = false
         Bulb.setColor(r, g, b)
-        setGlow(Color.rgb(r, g, b))
+        sphere.setLightColor(Color.rgb(r, g, b))
+    }
+
+    // ---------- becul doar al meu ----------
+    private fun updateMeshInfo() {
+        val name = prefs.getString("name", "unpaired") ?: "unpaired"
+        meshInfo.text = if (name == "unpaired")
+            "Becul are acum datele din fabrică, deci orice telefon sau aplicație AwoX îl poate controla. Dă-i un nume și o parolă doar ale tale."
+        else
+            "Becul e securizat. Doar aplicația asta îl mai poate controla.\nNume mesh: $name\nParolă: ${prefs.getString("pass", "")}"
+    }
+
+    private fun randomText(n: Int): String {
+        val chars = "abcdefghjkmnpqrstuvwxyz23456789"
+        val r = java.security.SecureRandom()
+        return (1..n).map { chars[r.nextInt(chars.length)] }.joinToString("")
+    }
+
+    private fun confirmSecure() {
+        if (Bulb.state != Bulb.State.ON) {
+            render(Bulb.State.ERROR, "Conectează-te întâi la bec, apoi securizează-l."); return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Fă becul doar al tău")
+            .setMessage("Becul primește un nume și o parolă noi, generate acum. După asta, niciun alt telefon, aplicație AwoX sau telecomandă nu-l mai poate controla.\n\nDatele le vezi oricând aici, în Siguranță. Dacă vreodată resetezi becul, revine la datele din fabrică.")
+            .setPositiveButton("Securizează") { _, _ -> doSecure() }
+            .setNegativeButton("Renunță", null)
+            .show()
+    }
+
+    private fun doSecure() {
+        val name = "bec-" + randomText(6)
+        val pass = randomText(10)
+        val ltk = randomText(16)
+        bulbText.text = "Schimb datele becului..."
+        Bulb.changeMesh(name, pass, ltk) { ok ->
+            runOnUiThread {
+                if (ok) {
+                    prefs.edit().putString("name", name).putString("pass", pass).apply()
+                    nameEdit.setText(name)
+                    passEdit.setText(pass)
+                    updateMeshInfo()
+                    bulbText.text = "Gata. Becul e acum doar al tău."
+                    Bulb.disconnect()
+                    main.postDelayed({ autoConnect() }, 1500)
+                } else {
+                    bulbText.text = "Becul n-a acceptat datele noi și rămâne cu cele vechi. Încearcă din nou."
+                }
+            }
+        }
     }
 
     // ---------- programări ----------

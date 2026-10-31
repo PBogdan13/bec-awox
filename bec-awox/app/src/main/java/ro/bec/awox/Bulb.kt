@@ -211,6 +211,16 @@ object Bulb {
 
     private fun onRead(uuid: UUID, value: ByteArray) {
         opDone()
+        val mcb = meshCb
+        if (uuid == PAIR && mcb != null && state == State.ON) {
+            meshCb = null
+            val ok = value.isNotEmpty() && value[0] == 0x07.toByte()
+            if (ok) {
+                meshName = newMeshName; meshPass = newMeshPass
+            }
+            mcb(ok)
+            return
+        }
         if (uuid != PAIR || state != State.CONNECTING) return
         when {
             value.size >= 9 && value[0] == 0x0d.toByte() -> {
@@ -306,6 +316,42 @@ object Bulb {
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             main.post { if (g == gatt) onNotify(value) }
+        }
+    }
+
+    // ---------- nume și parolă de mesh proprii ----------
+    private var meshCb: ((Boolean) -> Unit)? = null
+    private var newMeshName = ""
+    private var newMeshPass = ""
+
+    /**
+     * Schimbă numele, parola și cheia mesh-ului din bec. După asta, becul răspunde doar
+     * cui știe noile date. Rezultatul vine în cb (true = becul a acceptat).
+     */
+    fun changeMesh(name: String, pass: String, ltk: String, cb: (Boolean) -> Unit) {
+        main.post {
+            val g = gatt
+            val k = key
+            val pair = service?.getCharacteristic(PAIR)
+            if (g == null || k == null || pair == null || state != State.ON) {
+                cb(false); return@post
+            }
+            newMeshName = name
+            newMeshPass = pass
+            meshCb = cb
+            enqueue(Op { writeChar(g, pair, byteArrayOf(0x04) + Telink.enc(k, name.toByteArray(Charsets.UTF_8))) })
+            enqueue(Op { writeChar(g, pair, byteArrayOf(0x05) + Telink.enc(k, pass.toByteArray(Charsets.UTF_8))) })
+            enqueue(Op { writeChar(g, pair, byteArrayOf(0x06) + Telink.enc(k, ltk.toByteArray(Charsets.UTF_8))) })
+            enqueue(Op {
+                main.postDelayed({ enqueue(Op { g.readCharacteristic(pair) }) }, 1000)
+                false
+            })
+            main.postDelayed({
+                val c = meshCb
+                if (c != null) {
+                    meshCb = null; c(false)
+                }
+            }, 10_000)
         }
     }
 
