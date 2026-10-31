@@ -237,11 +237,11 @@ object Bulb {
         val st = Status(lastOn, mode == 3, u(13), u(14), u(15), u(16), u(17), u(18), mode)
         lastStatus = st
         // becul s-a reaprins singur la scurt timp după ce l-ai stins: îl stingem din nou
+        val sinceOff = android.os.SystemClock.elapsedRealtime() - offAt
         if (lastOn && !desiredOn && offAt > 0 && reOffCount < 5 &&
-            android.os.SystemClock.elapsedRealtime() - offAt < 120_000
+            sinceOff > 3000 && sinceOff < 120_000
         ) {
             reOffCount++
-            stopSequence()
             send(C_POWER, byteArrayOf(0))
         }
         statusListener?.invoke(st)
@@ -340,10 +340,7 @@ object Bulb {
         if (!on) {
             offAt = android.os.SystemClock.elapsedRealtime(); reOffCount = 0
         }
-        if (!on) stopSequence()
         send(C_POWER, byteArrayOf(if (on) 1 else 0))
-        // rezervă: dacă becul a rămas sau a revenit aprins, mai trimitem o dată oprirea
-        if (!on) main.postDelayed({ if (!desiredOn && lastOn) { stopSequence(); send(C_POWER, byteArrayOf(0)); lastOn = false } }, 1500)
     }
 
     /**
